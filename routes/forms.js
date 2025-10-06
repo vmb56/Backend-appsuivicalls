@@ -28,10 +28,10 @@ router.post("/", async (req, res) => {
     } = req.body || {};
 
     // validations minimales
-    if (!date || !heure || !appelant || !appele || !contact) {
+    if (!date || !heure || !appele || !contact) {
       return res.status(400).json({
         message:
-          "Champs requis manquants: date, heure, appelant, appele, contact",
+          "Champs requis manquants: date, heure,  appele, contact",
       });
     }
 
