@@ -171,6 +171,7 @@ router.get("/", async (req, res) => {
 });
 
 
+
 //recuper un seul appel par son id
 router.get("/:id", async (req, res) => {
   try {
@@ -188,6 +189,7 @@ router.get("/:id", async (req, res) => {
     });
   }
 });
+
 
 
 
@@ -210,10 +212,10 @@ router.put("/:id", async (req, res) => {
       dernierDiplome = "",
     } = req.body || {};
 
-    if (!date || !heure || !appelant || !appele || !contact) {
+    if (!date || !heure ||  !appele || !contact) {
       return res.status(400).json({
         message:
-          "Champs requis manquants: date, heure, appelant, appele, contact",
+          "Champs requis manquants: date, heure,  appele, contact",
       });
     }
 
