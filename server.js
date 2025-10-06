@@ -2,7 +2,7 @@
 const express = require('express');
 const cors = require('cors');
 const pool = require('./db');                // 👈 on importe le pool ici aussi
-const signupRouter = require('./routes/Signup');
+const signupRouter = require('./routes/signup');
 const formsRouter = require('./routes/forms');
 const app = express();
 app.use(cors());
