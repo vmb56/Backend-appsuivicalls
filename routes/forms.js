@@ -98,13 +98,15 @@ router.get("/", async (req, res) => {
       pigier = "",
       maitrise = "",
       page = 1,
-      pageSize = 500,
+      pageSize = 20,
       sort = "date_desc",
+      all = "",                 // ✅ nouveau : all=1 pour tout renvoyer
     } = req.query;
 
     const where = [];
     const args = [];
 
+    // Filtres
     if (startDate) { where.push("date >= ?"); args.push(startDate); }
     if (endDate)   { where.push("date <= ?"); args.push(endDate); }
     if (filiere)   { where.push("filiere = ?"); args.push(filiere); }
@@ -117,58 +119,80 @@ router.get("/", async (req, res) => {
       args.push(maitrise.toLowerCase());
     }
     if (q) {
-      // recherche large (LIKE) — côté SQL (case-insensitive via LOWER)
       where.push(`(
-        LOWER(appelant) LIKE ? OR LOWER(appele) LIKE ? OR LOWER(contact) LIKE ? OR
-        LOWER(filiere) LIKE ? OR LOWER(dernierDiplome) LIKE ? OR LOWER(maitriseInfo) LIKE ? OR
+        LOWER(appelant)       LIKE ? OR
+        LOWER(appele)         LIKE ? OR
+        LOWER(contact)        LIKE ? OR
+        LOWER(filiere)        LIKE ? OR
+        LOWER(dernierDiplome) LIKE ? OR
+        LOWER(maitriseInfo)   LIKE ? OR
         date LIKE ? OR heure LIKE ?
       )`);
-      const like = `%${norm(q)}%`;
-      // NB: pour LIKE sur LOWER(col), on normalise peu côté SQL, on fait simple ici.
+      const like = `%${q.toString().toLowerCase()}%`;
       args.push(like, like, like, like, like, like, `%${q}%`, `%${q}%`);
     }
 
-
-    
+    // Tri
     const order = {
-      date_desc: "date DESC, heure DESC",
-      date_asc: "date ASC, heure ASC",
+      date_desc:    "date DESC, heure DESC",
+      date_asc:     "date ASC,  heure ASC",
       created_desc: "createdAt DESC",
-      created_asc: "createdAt ASC",
+      created_asc:  "createdAt ASC",
     }[sort] || "date DESC, heure DESC";
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
-    const limit = Math.max(1, Math.min(200, Number(pageSize)));
-    const offset = (Math.max(1, Number(page)) - 1) * limit;
 
-    // total
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS c FROM calls ${whereSql}`,
-      args
-    );
+    // ✅ total filtré (avec WHERE)
+    const [countRows] = await pool.query(`SELECT COUNT(*) AS c FROM calls ${whereSql}`, args);
+    const total = Number(countRows?.[0]?.c || 0);
 
-    // rows
-    const [rows] = await pool.query(
-      `SELECT * FROM calls ${whereSql} ORDER BY ${order} LIMIT ? OFFSET ?`, 
-      [...args, limit, offset]
-    );
+    // ✅ totalAll pour toute la BD (sans WHERE)
+    const [countAllRows] = await pool.query(`SELECT COUNT(*) AS c FROM calls`);
+    const totalAll = Number(countAllRows?.[0]?.c || 0);
 
+    // ✅ si all=1 → on renvoie toutes les lignes (en respectant les filtres), sinon LIMIT/OFFSET
+    const returnAll = all === "1" || all === "true";
 
-    res.json({
-      total: Number(countRows[0].c || 0),
-      page: Number(page),
-      pageSize: limit,
-      data: rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier })),
-    });
+    let rowsSql = `SELECT * FROM calls ${whereSql} ORDER BY ${order}`;
+    const rowsArgs = [...args];
+
+    if (!returnAll) {
+      const limit = Math.max(1, Math.min(200, Number(pageSize)));
+      const offset = (Math.max(1, Number(page)) - 1) * limit;
+      rowsSql += ` LIMIT ? OFFSET ?`;
+      rowsArgs.push(limit, offset);
+
+      const [rows] = await pool.query(rowsSql, rowsArgs);
+      return res.json({
+        total,          // nb après filtres
+        totalAll,       // nb total BD
+        page: Number(page),
+        pageSize: limit,
+        returned: rows.length,
+        data: rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier })),
+      });
+    } else {
+      // all=1 : pas de LIMIT/OFFSET
+      const [rows] = await pool.query(rowsSql, rowsArgs);
+      return res.json({
+        total,          // nb après filtres
+        totalAll,       // nb total BD
+        page: null,     // pas de pagination serveur
+        pageSize: null,
+        returned: rows.length,
+        data: rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier })),
+      });
+    }
   } catch (err) {
     console.error("DB SELECT error:", err);
-    return res.status(500).json({
+    res.status(500).json({
       message: "Erreur serveur lors de la lecture",
       code: err.code,
       detail: err.sqlMessage || err.message,
     });
   }
 });
+
 
 
 
