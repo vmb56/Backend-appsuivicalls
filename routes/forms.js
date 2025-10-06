@@ -98,7 +98,7 @@ router.get("/", async (req, res) => {
       pigier = "",
       maitrise = "",
       page = 1,
-      pageSize = 20,
+      pageSize = 500,
       sort = "date_desc",
     } = req.query;
 
