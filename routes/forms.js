@@ -1,17 +1,20 @@
 // routes/calls.js
 const express = require("express");
 const router = express.Router();
-const pool = require("../db");
+const pool = require("../db"); // ✅ le pool est hors du dossier routes
 
-// petite utilitaire pour normaliser des strings (pour la recherche)
+// utilitaire pour normaliser des strings (pour la recherche)
 function norm(s) {
-  return String(s ?? "").toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "").trim();
+  return String(s ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .trim();
 }
 
-
-
-
-//ajout d'un appel
+/* =========================================================
+ *  POST /          → créer un appel
+ * =======================================================*/
 router.post("/", async (req, res) => {
   try {
     const {
@@ -21,6 +24,7 @@ router.post("/", async (req, res) => {
       appele,
       contact,
       filiere = null,
+      critere = null,       // ✅ NOUVEAU
       dejaPigier = false,
       maitriseInfo = "",
       dernierDiplome = "",
@@ -30,23 +34,24 @@ router.post("/", async (req, res) => {
     // validations minimales
     if (!date || !heure || !appele || !contact) {
       return res.status(400).json({
-        message:
-          "Champs requis manquants: date, heure,  appele, contact",
+        message: "Champs requis manquants: date, heure, appele, contact",
       });
     }
 
     const sql = `
       INSERT INTO calls
-        (date, heure, appelant, appele, contact, filiere, dejaPigier, maitriseInfo, dernierDiplome, createdAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (\`date\`, \`heure\`, \`appelant\`, \`appele\`, \`contact\`,
+         \`filiere\`, \`critere\`, \`dejaPigier\`, \`maitriseInfo\`, \`dernierDiplome\`, \`createdAt\`)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
     const params = [
       date,
       heure,
-      appelant,
+      appelant || null,
       appele,
       contact,
       filiere || null,
+      critere || null,
       dejaPigier ? 1 : 0,
       maitriseInfo || "",
       dernierDiplome || "",
@@ -59,14 +64,15 @@ router.post("/", async (req, res) => {
       id: result.insertId,
       date,
       heure,
-      appelant,
+      appelant: appelant || null,
       appele,
       contact,
       filiere,
+      critere: critere || null,
       dejaPigier: !!dejaPigier,
       maitriseInfo,
       dernierDiplome,
-      createdAt: params[9],
+      createdAt: params[10],
       message: "Appel créé ✅",
     });
   } catch (err) {
@@ -82,12 +88,14 @@ router.post("/", async (req, res) => {
   }
 });
 
-/**
-
- * Query params optionnels: q, startDate, endDate, filiere, pigier(oui|non),
- *   maitrise(oui|non), page=1, pageSize=20, sort=date_desc|date_asc|created_desc|created_asc
- */
-
+/* =========================================================
+ *  GET /           → liste avec filtres + pagination
+ *  Query params:
+ *   q, startDate, endDate, filiere, critere(interne|externe),
+ *   pigier(oui|non), maitrise(oui|non),
+ *   page=1, pageSize=20, sort=date_desc|date_asc|created_desc|created_asc,
+ *   all=1 (retourne tout, sans LIMIT/OFFSET)
+ * =======================================================*/
 router.get("/", async (req, res) => {
   try {
     const {
@@ -95,65 +103,88 @@ router.get("/", async (req, res) => {
       startDate = "",
       endDate = "",
       filiere = "",
+      critere = "",
       pigier = "",
       maitrise = "",
       page = 1,
       pageSize = 20,
       sort = "date_desc",
-      all = "",                 // ✅ nouveau : all=1 pour tout renvoyer
+      all = "",
     } = req.query;
 
     const where = [];
     const args = [];
 
     // Filtres
-    if (startDate) { where.push("date >= ?"); args.push(startDate); }
-    if (endDate)   { where.push("date <= ?"); args.push(endDate); }
-    if (filiere)   { where.push("filiere = ?"); args.push(filiere); }
+    if (startDate) { where.push("`date` >= ?"); args.push(startDate); }
+    if (endDate)   { where.push("`date` <= ?"); args.push(endDate); }
+    if (filiere)   { where.push("`filiere` = ?"); args.push(filiere); }
+    if (critere)   { where.push("`critere` = ?"); args.push(critere); }
     if (pigier === "oui" || pigier === "non") {
-      where.push("dejaPigier = ?");
+      where.push("`dejaPigier` = ?");
       args.push(pigier === "oui" ? 1 : 0);
     }
     if (maitrise === "oui" || maitrise === "non") {
-      where.push("LOWER(maitriseInfo) = ?");
+      where.push("LOWER(`maitriseInfo`) = ?");
       args.push(maitrise.toLowerCase());
     }
     if (q) {
       where.push(`(
-        LOWER(appelant)       LIKE ? OR
-        LOWER(appele)         LIKE ? OR
-        LOWER(contact)        LIKE ? OR
-        LOWER(filiere)        LIKE ? OR
-        LOWER(dernierDiplome) LIKE ? OR
-        LOWER(maitriseInfo)   LIKE ? OR
-        date LIKE ? OR heure LIKE ?
+        LOWER(\`appelant\`)       LIKE ? OR
+        LOWER(\`appele\`)         LIKE ? OR
+        LOWER(\`contact\`)        LIKE ? OR
+        LOWER(\`filiere\`)        LIKE ? OR
+        LOWER(\`critere\`)        LIKE ? OR
+        LOWER(\`dernierDiplome\`) LIKE ? OR
+        LOWER(\`maitriseInfo\`)   LIKE ? OR
+        \`date\` LIKE ? OR \`heure\` LIKE ?
       )`);
-      const like = `%${q.toString().toLowerCase()}%`;
-      args.push(like, like, like, like, like, like, `%${q}%`, `%${q}%`);
+      const like = `%${norm(q)}%`;
+      args.push(like, like, like, like, like, like, like, `%${q}%`, `%${q}%`);
     }
 
     // Tri
     const order = {
-      date_desc:    "date DESC, heure DESC",
-      date_asc:     "date ASC,  heure ASC",
-      created_desc: "createdAt DESC",
-      created_asc:  "createdAt ASC",
-    }[sort] || "date DESC, heure DESC";
+      date_desc:    "`date` DESC, `heure` DESC",
+      date_asc:     "`date` ASC,  `heure` ASC",
+      created_desc: "`createdAt` DESC",
+      created_asc:  "`createdAt` ASC",
+    }[sort] || "`date` DESC, `heure` DESC";
 
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    // ✅ total filtré (avec WHERE)
-    const [countRows] = await pool.query(`SELECT COUNT(*) AS c FROM calls ${whereSql}`, args);
+    // total filtré
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS c FROM calls ${whereSql}`,
+      args
+    );
     const total = Number(countRows?.[0]?.c || 0);
 
-    // ✅ totalAll pour toute la BD (sans WHERE)
+    // total BD
     const [countAllRows] = await pool.query(`SELECT COUNT(*) AS c FROM calls`);
     const totalAll = Number(countAllRows?.[0]?.c || 0);
 
-    // ✅ si all=1 → on renvoie toutes les lignes (en respectant les filtres), sinon LIMIT/OFFSET
+    // all=1 → pas de limit/offset
     const returnAll = all === "1" || all === "true";
 
-    let rowsSql = `SELECT * FROM calls ${whereSql} ORDER BY ${order}`;
+    let rowsSql = `
+      SELECT
+        \`id\`,
+        \`date\`,
+        DATE_FORMAT(\`heure\`, '%H:%i') AS heure,  -- HH:mm
+        \`appelant\`,
+        \`appele\`,
+        \`contact\`,
+        \`filiere\`,
+        \`critere\`,
+        \`dejaPigier\`,
+        \`maitriseInfo\`,
+        \`dernierDiplome\`,
+        \`createdAt\`
+      FROM calls
+      ${whereSql}
+      ORDER BY ${order}
+    `;
     const rowsArgs = [...args];
 
     if (!returnAll) {
@@ -164,20 +195,19 @@ router.get("/", async (req, res) => {
 
       const [rows] = await pool.query(rowsSql, rowsArgs);
       return res.json({
-        total,          // nb après filtres
-        totalAll,       // nb total BD
+        total,
+        totalAll,
         page: Number(page),
         pageSize: limit,
         returned: rows.length,
         data: rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier })),
       });
     } else {
-      // all=1 : pas de LIMIT/OFFSET
       const [rows] = await pool.query(rowsSql, rowsArgs);
       return res.json({
-        total,          // nb après filtres
-        totalAll,       // nb total BD
-        page: null,     // pas de pagination serveur
+        total,
+        totalAll,
+        page: null,
         pageSize: null,
         returned: rows.length,
         data: rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier })),
@@ -193,17 +223,63 @@ router.get("/", async (req, res) => {
   }
 });
 
+/* =========================================================
+ *  GET /simple     → liste simple (limite), SANS filtres
+ * =======================================================*/
+router.get("/simple", async (req, res) => {
+  try {
+    const lim = Math.max(1, Math.min(1000, Number(req.query.limit) || 500));
 
+    const sql = `
+      SELECT
+        \`id\`,
+        \`date\`,
+        DATE_FORMAT(\`heure\`, '%H:%i') AS heure,   -- HH:mm
+        \`appelant\`,
+        \`appele\`,
+        \`contact\`,
+        \`filiere\`,
+        \`critere\`,
+        \`dejaPigier\`,
+        \`maitriseInfo\`,
+        \`dernierDiplome\`
+      FROM calls
+      ORDER BY \`date\` DESC, \`heure\` DESC
+      LIMIT ?
+    `;
 
+    const [rows] = await pool.query(sql, [lim]);
+    const data = rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier }));
+    res.json(data);
+  } catch (err) {
+    console.error("DB SIMPLE SELECT error:", err);
+    res.status(500).json({
+      message: "Erreur serveur lors de la lecture (simple)",
+      code: err.code,
+      detail: err.sqlMessage || err.message,
+    });
+  }
+});
 
-//recuper un seul appel par son id
+/* =========================================================
+ *  GET /:id        → récupérer un appel par id
+ * =======================================================*/
 router.get("/:id", async (req, res) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "Id invalide" });
 
-    const [rows] = await pool.query(`SELECT * FROM calls WHERE id = ${id}`);
-    res.status(200).json(rows || null);
+    const [rows] = await pool.query(
+      `SELECT \`id\`, \`date\`, DATE_FORMAT(\`heure\`, '%H:%i') AS heure,
+              \`appelant\`, \`appele\`, \`contact\`, \`filiere\`, \`critere\`,
+              \`dejaPigier\`, \`maitriseInfo\`, \`dernierDiplome\`, \`createdAt\`
+       FROM calls WHERE \`id\` = ?`,
+      [id]
+    );
+    const row = rows?.[0];
+    if (!row) return res.status(404).json({ message: "Appel introuvable" });
+    row.dejaPigier = !!row.dejaPigier;
+    res.status(200).json(row);
   } catch (err) {
     console.error("DB SELECT error:", err);
     return res.status(500).json({
@@ -214,11 +290,9 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-
-
-
-//recuper un seul appel par son id
-//modification d'un appel
+/* =========================================================
+ *  PUT /:id        → modifier un appel
+ * =======================================================*/
 router.put("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -231,31 +305,32 @@ router.put("/:id", async (req, res) => {
       appele,
       contact,
       filiere = null,
+      critere = null,
       dejaPigier = false,
       maitriseInfo = "",
       dernierDiplome = "",
     } = req.body || {};
 
-    if (!date || !heure ||  !appele || !contact) {
+    if (!date || !heure || !appele || !contact) {
       return res.status(400).json({
-        message:
-          "Champs requis manquants: date, heure,  appele, contact",
+        message: "Champs requis manquants: date, heure, appele, contact",
       });
     }
 
     const sql = `
       UPDATE calls
-      SET date = ?, heure = ?, appelant = ?, appele = ?, contact = ?,
-          filiere = ?, dejaPigier = ?, maitriseInfo = ?, dernierDiplome = ?
-      WHERE id = ?
+      SET \`date\` = ?, \`heure\` = ?, \`appelant\` = ?, \`appele\` = ?, \`contact\` = ?,
+          \`filiere\` = ?, \`critere\` = ?, \`dejaPigier\` = ?, \`maitriseInfo\` = ?, \`dernierDiplome\` = ?
+      WHERE \`id\` = ?
     `;
     const params = [
       date,
       heure,
-      appelant,
+      appelant || null,
       appele,
       contact,
       filiere || null,
+      critere || null,
       dejaPigier ? 1 : 0,
       maitriseInfo || "",
       dernierDiplome || "",
@@ -271,10 +346,11 @@ router.put("/:id", async (req, res) => {
       id,
       date,
       heure,
-      appelant,
+      appelant: appelant || null,
       appele,
       contact,
       filiere,
+      critere: critere || null,
       dejaPigier: !!dejaPigier,
       maitriseInfo,
       dernierDiplome,
@@ -290,13 +366,15 @@ router.put("/:id", async (req, res) => {
   }
 });
 
-
+/* =========================================================
+ *  DELETE /:id     → supprimer un appel
+ * =======================================================*/
 router.delete("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ message: "Id invalide" });
 
-    const [result] = await pool.query(`DELETE FROM calls WHERE id = ?`, [id]);
+    const [result] = await pool.query(`DELETE FROM calls WHERE \`id\` = ?`, [id]);
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: "Appel introuvable" });
     }
@@ -306,44 +384,6 @@ router.delete("/:id", async (req, res) => {
     console.error("DB DELETE error:", err);
     return res.status(500).json({
       message: "Erreur serveur lors de la suppression",
-      code: err.code,
-      detail: err.sqlMessage || err.message,
-    });
-  }
-});
-
-
-
-router.get("/", async (req, res) => {
-  try {
-    const lim = Math.max(1, Math.min(1000, Number(req.query.limit) || 500));
-
-    // Tu as bien des colonnes séparées: date (DATE) et heure (TIME)
-    const sql = `
-      SELECT
-        id,
-        date,
-        DATE_FORMAT(heure, '%H:%i') AS heure,   -- HH:mm
-        appelant,
-        appele,
-        contact,
-        filiere,
-        dejaPigier,
-        maitriseInfo,
-        dernierDiplome
-      FROM calls
-      ORDER BY date DESC, heure DESC
-      LIMIT ?
-    `;
-
-    const [rows] = await pool.query(sql, [lim]);
-    // normalise le booléen
-    const data = rows.map(r => ({ ...r, dejaPigier: !!r.dejaPigier }));
-    res.json(data);
-  } catch (err) {
-    console.error("DB SIMPLE SELECT error:", err);
-    res.status(500).json({
-      message: "Erreur serveur lors de la lecture (simple)",
       code: err.code,
       detail: err.sqlMessage || err.message,
     });
