@@ -1,26 +1,20 @@
-// db.js
-const mysql = require('mysql2/promise');
+// db.js — Turso/libSQL (CommonJS)
+require("dotenv").config();
 
-const pool = mysql.createPool({
-  host: 'sql8.freesqldatabase.com',        // évite "localhost" (socket)
-  user: 'sql8801066',
-  password: 'RrIKmXGYh8',
-  database: 'sql8801066',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0,
-});
+let db; // singleton
 
-// (optionnel) petit ping au chargement
-(async () => {
-  try {
-    const c = await pool.getConnection();
-    await c.ping();
-    console.log('✅ Connecté à MySQL (pool)');
-    c.release();
-  } catch (err) {
-    console.error('❌ Erreur MySQL init:', err.code, err.message);
+async function getDb() {
+  if (!db) {
+    const { createClient } = await import("@libsql/client");
+    db = createClient({
+      url: process.env.TURSO_DATABASE_URL,
+      authToken: process.env.TURSO_AUTH_TOKEN, // omets si DB publique
+    });
+    // ping simple
+    await db.execute("SELECT 1");
+    console.log("✅ Connecté à Turso (libSQL)");
   }
-})();
+  return db;
+}
 
-module.exports = pool;
+module.exports = { getDb };
